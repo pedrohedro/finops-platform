@@ -1,0 +1,53 @@
+{
+    "family": "finops-platform-task",
+    "networkMode": "awsvpc",
+    "executionRoleArn": "arn:aws:iam::731083046316:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::731083046316:role/ecsTaskExecutionRole",
+    "containerDefinitions": [
+        {
+            "name": "finops-container",
+            "image": "731083046316.dkr.ecr.us-east-1.amazonaws.com/finops-platform:latest",
+            "essential": true,
+            "portMappings": [
+                {
+                    "containerPort": 3000,
+                    "hostPort": 3000,
+                    "protocol": "tcp"
+                },
+                {
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp"
+                }
+            ],
+            "healthCheck": {
+                "command": [
+                    "CMD-SHELL",
+                    "curl -f http://localhost:8080/api/health || exit 1"
+                ],
+                "interval": 30,
+                "timeout": 5,
+                "retries": 3,
+                "startPeriod": 60
+            },
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/finops-platform",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-create-group": "true",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            }
+        }
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "runtimePlatform": {
+        "operatingSystemFamily": "LINUX",
+        "cpuArchitecture": "ARM64"
+    },
+    "cpu": "1024",
+    "memory": "2048"
+}

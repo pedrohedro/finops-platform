@@ -1,0 +1,31 @@
+{
+  "TrustPolicy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::731083046316:role/ecsFinOpsTaskRole"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "PermissionPolicy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "ce:GetCostAndUsage",
+          "ce:GetCostForecast",
+          "ce:GetSavingsPlansPurchaseRecommendation",
+          "ce:GetRightsizingRecommendation",
+          "organizations:ListAccounts",
+          "organizations:DescribeOrganization"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }
+}

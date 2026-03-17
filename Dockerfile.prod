@@ -1,0 +1,62 @@
+# ==========================================
+# Stage 1: Build Frontend (Next.js)
+# ==========================================
+FROM node:20-alpine AS builder-frontend
+
+WORKDIR /app/dashboard
+COPY dashboard/package*.json ./
+RUN npm install --legacy-peer-deps
+
+COPY dashboard/ ./
+# We need to set ENV NEXT_PUBLIC_API_URL so the frontend knows where to talk to the API during build/runtime.
+# Since it's a single container, the API will be exposed on port 8080 of the same host.
+ENV NEXT_PUBLIC_API_URL=http://localhost:8080
+RUN npm run build
+
+# ==========================================
+# Stage 2: Final Runtime Image (Python + Node)
+# ==========================================
+FROM python:3.11-slim
+
+# Install Node.js, Supervisor, and required system dependencies
+RUN apt-get update && apt-get install -y \
+    supervisor \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Backend (API) and install dependencies
+COPY api/ /app/api/
+COPY collector/requirements.txt /app/collector/requirements.txt
+RUN pip install --no-cache-dir -r /app/api/requirements.txt -r /app/collector/requirements.txt uvicorn httpx boto3
+
+# Copy Collector and its dependencies (if any)
+# Assuming collector uses the same clickhouse-connect library which is in api/requirements.txt
+COPY collector/ /app/collector/
+
+# Copy Frontend Build from Stage 1
+COPY --from=builder-frontend /app/dashboard/.next /app/dashboard/.next
+COPY --from=builder-frontend /app/dashboard/node_modules /app/dashboard/node_modules
+COPY --from=builder-frontend /app/dashboard/package.json /app/dashboard/package.json
+COPY --from=builder-frontend /app/dashboard/public /app/dashboard/public
+
+# Copy Supervisor configuration
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Expose ports
+# 3000: Next.js Frontend
+# 8080: FastAPI Backend
+EXPOSE 3000 8080
+
+# Environment variables
+ENV NODE_ENV=production
+ENV PYTHONUNBUFFERED=1
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Start Supervisor to manage all processes
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
