@@ -37,13 +37,20 @@ def execute_query(query: str, params: object | None = None) -> list[tuple]:
 
 app = FastAPI(title="FinOps API")
 
+Days = Annotated[int, Query(ge=1, le=365)]
+Limit = Annotated[int, Query(ge=1, le=1000)]
+
+
 class AWSAccount(BaseModel):
-    name: str
-    aws_account_id: str
-    role_arn: str
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    aws_account_id: Annotated[str, Field(pattern=r"^\d{12}$")]
+    role_arn: Annotated[
+        str,
+        Field(pattern=r"^arn:aws:iam::\d{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$"),
+    ]
 
 class AccountResponse(BaseModel):
-    id: int
+    id: str
     name: str
     aws_account_id: str
     role_arn: str
@@ -77,182 +84,155 @@ def health():
 
 # ---------- Summary ----------
 @app.get("/api/summary")
-def get_summary(days: int = 30):
-    db = get_db()
-    if not db:
-        return {"total_cost": 14580.42, "previous_cost": 13200.15}
-
+def get_summary(days: Days = 30):
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=days)
-    prev_start = start_date - timedelta(days=days)
-
-    current = db.table("costs").select("cost").gte("date", str(start_date)).lte("date", str(end_date)).eq("type", "actual").execute()
-    previous = db.table("costs").select("cost").gte("date", str(prev_start)).lt("date", str(start_date)).eq("type", "actual").execute()
-
-    total = sum(float(r["cost"]) for r in current.data) if current.data else 0
-    prev_total = sum(float(r["cost"]) for r in previous.data) if previous.data else 0
-
-    return {"total_cost": round(total, 2), "previous_cost": round(prev_total, 2)}
+    previous_start = start_date - timedelta(days=days)
+    rows = execute_query(
+        """
+        SELECT
+            round(sumIf(cost, record_type = 'actual' AND date >= %(start)s AND date <= %(end)s), 2),
+            round(sumIf(cost, record_type = 'actual' AND date >= %(previous_start)s AND date < %(start)s), 2)
+        FROM costs
+        """,
+        {"start": start_date, "end": end_date, "previous_start": previous_start},
+    )
+    current, previous = rows[0]
+    return {"total_cost": float(current), "previous_cost": float(previous)}
 
 # ---------- Top Services ----------
 @app.get("/api/services")
-def top_services(days: int = 30, limit: int = 5):
-    db = get_db()
-    if not db:
-        return [
-            {"name": "EC2", "cost": 5200.50},
-            {"name": "RDS", "cost": 3100.20},
-            {"name": "S3", "cost": 1200.80},
-            {"name": "Lambda", "cost": 850.30},
-            {"name": "CloudFront", "cost": 420.10}
-        ]
-
-    start_date = str((datetime.now() - timedelta(days=days)).date())
-    rows = db.table("costs").select("service, cost").gte("date", start_date).eq("type", "actual").execute()
-
-    from collections import defaultdict
-    totals = defaultdict(float)
-    for r in rows.data:
-        totals[r["service"]] += float(r["cost"])
-
-    sorted_services = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:limit]
-    return [{"name": s, "cost": round(c, 2)} for s, c in sorted_services]
+def top_services(days: Days = 30, limit: Limit = 5):
+    rows = execute_query(
+        """
+        SELECT service, round(sum(cost), 2) AS total
+        FROM costs
+        WHERE date >= %(start)s AND record_type = 'actual'
+        GROUP BY service
+        ORDER BY total DESC
+        LIMIT %(limit)s
+        """,
+        {"start": datetime.now().date() - timedelta(days=days), "limit": limit},
+    )
+    return [{"name": service, "cost": float(cost)} for service, cost in rows]
 
 # ---------- Daily Trend ----------
 @app.get("/api/daily")
-def daily_trend(days: int = 30):
-    db = get_db()
-    if not db:
-        return _generate_mock_daily(days)
+def daily_trend(days: Days = 30):
+    rows = execute_query(
+        """
+        SELECT toString(date), round(sum(cost), 2), record_type
+        FROM costs
+        WHERE date >= %(start)s
+        GROUP BY date, record_type
+        ORDER BY date, record_type
+        """,
+        {"start": datetime.now().date() - timedelta(days=days)},
+    )
+    return [
+        {"date": date, "cost": float(cost), "type": record_type}
+        for date, cost, record_type in rows
+    ]
 
-    start_date = str((datetime.now() - timedelta(days=days)).date())
-    rows = db.table("costs").select("date, cost, type").gte("date", start_date).order("date").execute()
 
-    from collections import defaultdict
-    grouped = defaultdict(lambda: defaultdict(float))
-    for r in rows.data:
-        grouped[r["date"]][r["type"]] += float(r["cost"])
-
-    data = []
-    for date in sorted(grouped.keys()):
-        for record_type, cost in grouped[date].items():
-            data.append({"date": date, "cost": round(cost, 2), "type": record_type})
-    return data
+def grouped_costs(column: str, days: int, unknown: str) -> list[dict]:
+    if column not in {"environment", "team"}:
+        raise ValueError("Unsupported grouping column")
+    rows = execute_query(
+        f"""
+        SELECT if({column} = '', %(unknown)s, {column}) AS name, round(sum(cost), 2)
+        FROM costs
+        WHERE date >= %(start)s AND record_type = 'actual'
+        GROUP BY name
+        ORDER BY sum(cost) DESC
+        """,
+        {"start": datetime.now().date() - timedelta(days=days), "unknown": unknown},
+    )
+    return [{"name": name, "cost": float(cost)} for name, cost in rows]
 
 # ---------- Environment Breakdown ----------
 @app.get("/api/breakdown")
-def environment_breakdown(days: int = 30):
-    db = get_db()
-    if not db:
-        return [
-            {"name": "Production", "cost": 8500.00},
-            {"name": "Staging", "cost": 3200.50},
-            {"name": "Development", "cost": 2880.00}
-        ]
-
-    start_date = str((datetime.now() - timedelta(days=days)).date())
-    rows = db.table("costs").select("environment, cost").gte("date", start_date).eq("type", "actual").execute()
-
-    from collections import defaultdict
-    totals = defaultdict(float)
-    for r in rows.data:
-        totals[r["environment"] or "Unknown"] += float(r["cost"])
-
-    sorted_envs = sorted(totals.items(), key=lambda x: x[1], reverse=True)
-    return [{"name": e, "cost": round(c, 2)} for e, c in sorted_envs]
+def environment_breakdown(days: Days = 30):
+    return grouped_costs("environment", days, "Unknown")
 
 # ---------- Team Breakdown ----------
 @app.get("/api/teams")
-def team_breakdown(days: int = 30):
-    db = get_db()
-    if not db:
-        return [
-            {"name": "Platform", "cost": 6500.00},
-            {"name": "Data Science", "cost": 4200.00},
-            {"name": "E-commerce", "cost": 3880.42}
-        ]
-
-    start_date = str((datetime.now() - timedelta(days=days)).date())
-    rows = db.table("costs").select("team, cost").gte("date", start_date).eq("type", "actual").execute()
-
-    from collections import defaultdict
-    totals = defaultdict(float)
-    for r in rows.data:
-        totals[r["team"] or "Unassigned"] += float(r["cost"])
-
-    sorted_teams = sorted(totals.items(), key=lambda x: x[1], reverse=True)
-    return [{"name": t, "cost": round(c, 2)} for t, c in sorted_teams]
+def team_breakdown(days: Days = 30):
+    return grouped_costs("team", days, "Unassigned")
 
 # ---------- Raw Details ----------
 @app.get("/api/details")
-def raw_details(days: int = 7, limit: int = 100):
-    db = get_db()
-    if not db:
-        import random
-        services = ["EC2", "RDS", "S3", "Lambda"]
-        teams = ["Platform", "Data Science", "E-commerce"]
-        envs = ["Production", "Staging", "Dev"]
-        return [
-            {
-                "date": (datetime.now() - timedelta(days=random.randint(0, days))).strftime("%Y-%m-%d"),
-                "service": random.choice(services),
-                "team": random.choice(teams),
-                "environment": random.choice(envs),
-                "cost": round(random.uniform(10, 500), 2),
-                "type": "actual"
-            } for _ in range(20)
-        ]
-
-    start_date = str((datetime.now() - timedelta(days=days)).date())
-    rows = db.table("costs").select("date, service, team, environment, cost, type").gte("date", start_date).order("date", desc=True).order("cost", desc=True).limit(limit).execute()
-
+def raw_details(days: Days = 7, limit: Limit = 100):
+    rows = execute_query(
+        """
+        SELECT
+            toString(date),
+            service,
+            if(team = '', 'Unassigned', team),
+            if(environment = '', 'Unknown', environment),
+            round(cost, 2),
+            record_type
+        FROM costs
+        WHERE date >= %(start)s
+        ORDER BY date DESC, cost DESC
+        LIMIT %(limit)s
+        """,
+        {"start": datetime.now().date() - timedelta(days=days), "limit": limit},
+    )
     return [
         {
-            "date": r["date"],
-            "service": r["service"],
-            "team": r["team"] or "Unassigned",
-            "environment": r["environment"] or "Unknown",
-            "cost": round(float(r["cost"]), 2),
-            "type": r["type"]
+            "date": date,
+            "service": service,
+            "team": team,
+            "environment": environment,
+            "cost": float(cost),
+            "type": record_type,
         }
-        for r in rows.data
+        for date, service, team, environment, cost, record_type in rows
     ]
 
 # ---------- Account Management ----------
 @app.get("/api/accounts")
 def list_accounts():
-    db = get_db()
-    if not db:
-        return []
-    rows = db.table("accounts").select("*").execute()
+    rows = execute_query(
+        """
+        SELECT
+            toString(id), name, aws_account_id, role_arn, status, toString(last_sync)
+        FROM accounts
+        ORDER BY created_at DESC
+        """
+    )
     return [
         {
-            "id": r["id"],
-            "name": r["name"],
-            "aws_account_id": r["account_id"],
-            "role_arn": r["role_arn"],
-            "status": r["status"],
-            "last_sync": str(r["last_sync"]) if r["last_sync"] else None
+            "id": account_id,
+            "name": name,
+            "aws_account_id": aws_account_id,
+            "role_arn": role_arn,
+            "status": status,
+            "last_sync": last_sync,
         }
-        for r in rows.data
+        for account_id, name, aws_account_id, role_arn, status, last_sync in rows
     ]
 
 @app.post("/api/accounts")
 def create_account(account: AWSAccount):
-    db = get_db()
-    if not db:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-
-    result = db.table("accounts").insert({
-        "name": account.name,
-        "account_id": account.aws_account_id,
-        "role_arn": account.role_arn,
-        "status": "active"
-    }).execute()
-
-    if result.data:
-        return {"status": "created", "id": result.data[0]["id"]}
-    raise HTTPException(status_code=500, detail="Failed to create account")
+    account_id = uuid4()
+    execute_query(
+        """
+        INSERT INTO accounts (id, name, aws_account_id, role_arn, status)
+        VALUES
+        """,
+        [
+            (
+                account_id,
+                account.name,
+                account.aws_account_id,
+                account.role_arn,
+                "active",
+            )
+        ],
+    )
+    return {"status": "created", "id": str(account_id)}
 
 @app.post("/api/accounts/test")
 def test_account_connection(account: AWSAccount):
@@ -270,17 +250,3 @@ def test_account_connection(account: AWSAccount):
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-# ---------- Helpers ----------
-def _generate_mock_daily(days: int):
-    import random
-    data = []
-    end_date = datetime.now()
-    for i in range(days):
-        date = (end_date - timedelta(days=days - i)).strftime("%Y-%m-%d")
-        cost = 450 + (i * 2) + random.uniform(-50, 50)
-        data.append({"date": date, "cost": round(cost, 2), "type": "actual"})
-        if i > days - 7:
-            f_date = (end_date + timedelta(days=i - (days - 7))).strftime("%Y-%m-%d")
-            data.append({"date": f_date, "cost": round(cost * 1.05, 2), "type": "forecast"})
-    return data
