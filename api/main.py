@@ -88,7 +88,7 @@ async def observe_http(request: Request, call_next):
     started = perf_counter()
     response = await call_next(request)
     route = request.scope.get("route")
-    path = getattr(route, "path", request.url.path)
+    path = getattr(route, "path", "<unmatched>")
     HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
     HTTP_LATENCY.labels(request.method, path).observe(perf_counter() - started)
     response.headers["X-Frame-Options"] = "DENY"

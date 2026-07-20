@@ -166,3 +166,12 @@ def test_cors_allows_configured_local_dashboard():
         },
     )
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_metrics_use_constant_label_for_unmatched_paths():
+    client.get("/missing-metric-path-one")
+    client.get("/missing-metric-path-two")
+    response = client.get("/metrics")
+    assert 'path="<unmatched>"' in response.text
+    assert 'path="/missing-metric-path-one"' not in response.text
+    assert 'path="/missing-metric-path-two"' not in response.text
