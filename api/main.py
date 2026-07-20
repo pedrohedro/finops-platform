@@ -37,6 +37,17 @@ def execute_query(query: str, params: object | None = None) -> list[tuple]:
 
 app = FastAPI(title="FinOps API")
 
+HTTP_REQUESTS = Counter(
+    "finops_api_http_requests_total",
+    "Total HTTP requests handled by the FinOps API",
+    ["method", "path", "status"],
+)
+HTTP_LATENCY = Histogram(
+    "finops_api_http_request_duration_seconds",
+    "FinOps API request duration in seconds",
+    ["method", "path"],
+)
+
 Days = Annotated[int, Query(ge=1, le=365)]
 Limit = Annotated[int, Query(ge=1, le=1000)]
 
@@ -57,29 +68,70 @@ class AccountResponse(BaseModel):
     status: str
     last_sync: str | None
 
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
+
+@app.middleware("http")
+async def observe_http(request: Request, call_next):
+    started = perf_counter()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    path = getattr(route, "path", request.url.path)
+    HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
+    HTTP_LATENCY.labels(request.method, path).observe(perf_counter() - started)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    return response
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 # ---------- Health ----------
+def database_online() -> bool:
+    try:
+        get_db().execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/healthz")
+def liveness():
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readiness():
+    if not database_online():
+        raise HTTPException(status_code=503, detail="ClickHouse unavailable")
+    return {"status": "ready", "database": "online"}
+
+
 @app.get("/api/health")
 def health():
-    db = get_db()
-    db_status = "online" if db else "offline"
-    mode = "production" if db else "demo/mock"
-
-    aws_status = "configured" if os.getenv("AWS_ACCESS_KEY_ID") else "unconfigured"
-
+    online = database_online()
     return {
-        "status": "ok",
-        "mode": mode,
-        "database": db_status,
-        "aws": aws_status,
-        "version": "0.2.0"
+        "status": "ok" if online else "degraded",
+        "mode": "clickhouse",
+        "database": "online" if online else "offline",
+        "aws": "configured" if os.getenv("AWS_ACCESS_KEY_ID") else "unconfigured",
+        "version": "0.2.0",
     }
 
 # ---------- Summary ----------

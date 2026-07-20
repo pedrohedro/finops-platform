@@ -116,3 +116,53 @@ def test_database_failure_returns_503(mock_execute):
     response = client.get("/api/summary")
     assert response.status_code == 503
     assert response.json() == {"detail": "ClickHouse unavailable"}
+
+
+@patch("main.get_db")
+def test_liveness_does_not_touch_database(mock_get_db):
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    mock_get_db.assert_not_called()
+
+
+@patch("main.get_db")
+def test_readiness_returns_200_when_clickhouse_responds(mock_get_db):
+    mock_get_db.return_value.execute.return_value = [(1,)]
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "database": "online"}
+
+
+@patch("main.get_db")
+def test_readiness_returns_503_when_clickhouse_is_offline(mock_get_db):
+    mock_get_db.return_value.execute.side_effect = OSError("connection refused")
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "ClickHouse unavailable"}
+
+
+def test_metrics_exposes_bounded_http_labels():
+    client.get("/healthz")
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "finops_api_http_requests_total" in response.text
+    assert 'path="/healthz"' in response.text
+
+
+def test_security_headers_are_present():
+    response = client.get("/healthz")
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Content-Security-Policy"] == "default-src 'self'"
+
+
+def test_cors_allows_configured_local_dashboard():
+    response = client.options(
+        "/api/summary",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
