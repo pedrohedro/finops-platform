@@ -7,9 +7,17 @@ services:
     buildCommand: pip install -r api/requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: SUPABASE_URL
+      - key: CLICKHOUSE_HOST
         sync: false
-      - key: SUPABASE_KEY
+      - key: CLICKHOUSE_PORT
+        value: "9000"
+      - key: CLICKHOUSE_DB
+        value: finops
+      - key: CLICKHOUSE_USER
+        sync: false
+      - key: CLICKHOUSE_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
         sync: false
       - key: PYTHON_VERSION
-        value: "3.12"
+        value: "3.11"
