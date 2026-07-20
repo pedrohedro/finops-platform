@@ -1,10 +1,39 @@
+import logging
 import os
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from supabase import create_client, Client
+from time import perf_counter
+from typing import Annotated
+from uuid import uuid4
+
 import boto3
+from clickhouse_driver import Client
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from starlette.requests import Request
+from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
+
+
+def get_db() -> Client:
+    return Client(
+        host=os.getenv("CLICKHOUSE_HOST", "clickhouse"),
+        port=int(os.getenv("CLICKHOUSE_PORT", "9000")),
+        database=os.getenv("CLICKHOUSE_DB", "finops"),
+        user=os.getenv("CLICKHOUSE_USER", "default"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+    )
+
+
+def execute_query(query: str, params: object | None = None) -> list[tuple]:
+    try:
+        return get_db().execute(query, params or {})
+    except Exception as exc:
+        logger.exception("ClickHouse query failed")
+        raise HTTPException(status_code=503, detail="ClickHouse unavailable") from exc
+
 
 app = FastAPI(title="FinOps API")
 
@@ -28,18 +57,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-
-def get_db() -> Client | None:
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return None
-    try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        print(f"Supabase connection error: {e}")
-        return None
 
 # ---------- Health ----------
 @app.get("/api/health")
