@@ -29,6 +29,8 @@ test:
 	$(PNPM) --dir dashboard install --frozen-lockfile
 	$(PNPM) --dir dashboard build
 	./scripts/test_smoke.sh
+	$(PYTHON) scripts/test_supply_chain.py
+	./scripts/test_push_immutable_image.sh
 
 test-smoke:
 	./scripts/test_smoke.sh

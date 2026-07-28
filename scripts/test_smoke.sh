@@ -37,7 +37,15 @@ do
 done
 
 if [[ -n "${FAKE_FAIL_ON:-}" && "$*" == *"$FAKE_FAIL_ON"* ]]; then
-  exit 23
+  exit "${FAKE_FAIL_STATUS:-23}"
+fi
+
+if [[ -n "${FAKE_FAIL_ON_SECOND:-}" && "$*" == *"$FAKE_FAIL_ON_SECOND"* ]]; then
+  exit "${FAKE_FAIL_STATUS_SECOND:-47}"
+fi
+
+if [[ -n "${FAKE_SLEEP_ON:-}" && "$*" == *"$FAKE_SLEEP_ON"* ]]; then
+  sleep "${FAKE_SLEEP_SECONDS:-2}"
 fi
 
 if [[ "$*" == *"exec -T clickhouse clickhouse-client"* ]]; then
@@ -71,7 +79,12 @@ assert_log_contains "run --rm --no-deps forecast timeout 120 python forecast.py"
 assert_log_contains "exec -T api python -c"
 assert_log_contains "exec -T dashboard node -e"
 assert_log_contains "exec -T clickhouse clickhouse-client"
-assert_log_contains "down -v --remove-orphans"
+assert_log_contains "down -v --remove-orphans --rmi local"
+assert_log_contains "AbortSignal.timeout(10000)"
+assert_log_contains "--connect_timeout 5"
+assert_log_contains "--send_timeout 10"
+assert_log_contains "--receive_timeout 10"
+assert_log_contains "--max_execution_time 10"
 
 if grep -F "unexpected_aws_env=" "$fake_log" >/dev/null; then
   exit 1
@@ -90,6 +103,39 @@ set -e
 
 test "$smoke_status" -eq 23
 assert_log_contains "logs --no-color"
-assert_log_contains "down -v --remove-orphans"
+assert_log_contains "down -v --remove-orphans --rmi local"
+
+: >"$fake_log"
+set +e
+FAKE_FAIL_ON="down -v --remove-orphans --rmi local" run_smoke
+cleanup_status=$?
+set -e
+
+test "$cleanup_status" -eq 23
+
+: >"$fake_log"
+set +e
+FAKE_FAIL_ON="run --rm --no-deps normalizer" \
+  FAKE_FAIL_ON_SECOND="down -v --remove-orphans --rmi local" \
+  run_smoke
+smoke_and_cleanup_status=$?
+set -e
+
+test "$smoke_and_cleanup_status" -eq 23
+
+: >"$fake_log"
+set +e
+FAKE_SLEEP_ON="up -d --build" \
+  FAKE_SLEEP_SECONDS=2 \
+  SMOKE_COMPOSE_UP_TIMEOUT_SECONDS=1 \
+  run_smoke
+bounded_status=$?
+set -e
+
+test "$bounded_status" -eq 124
+assert_log_contains "down -v --remove-orphans --rmi local"
+bounded_env_file=$(awk -F= '/^envfile=/{print $2; exit}' "$fake_log")
+test -n "$bounded_env_file"
+test ! -e "$bounded_env_file"
 
 printf 'smoke script contract: ok\n'

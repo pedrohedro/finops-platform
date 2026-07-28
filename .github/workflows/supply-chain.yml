@@ -47,6 +47,7 @@ jobs:
 
   smoke:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -160,16 +161,7 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.image.outputs.name }}
           IMAGE_REF: ${{ steps.image.outputs.ref }}
-        run: |
-          if docker manifest inspect "$IMAGE_REF" >/dev/null 2>&1; then
-            echo "Refusing to overwrite existing image tag: $IMAGE_REF" >&2
-            exit 1
-          fi
-          docker push "$IMAGE_REF"
-          digest_ref=$(docker image inspect \
-            --format '{{index .RepoDigests 0}}' "$IMAGE_REF")
-          [[ "$digest_ref" == "${IMAGE_NAME}@sha256:"* ]]
-          printf 'digest_ref=%s\n' "$digest_ref" >>"$GITHUB_OUTPUT"
+        run: ./scripts/push_immutable_image.sh
 
       - name: Sign image digest with GitHub OIDC
         env:
