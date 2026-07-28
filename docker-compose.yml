@@ -69,6 +69,10 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-finops}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
     networks:
       - finops_net
     depends_on:
@@ -83,6 +87,10 @@ services:
       - ./normalizer:/app
     environment:
       - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-finops}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
     networks:
       - finops_net
     depends_on:
@@ -97,6 +105,10 @@ services:
       - ./forecast:/app
     environment:
       - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-finops}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
     networks:
       - finops_net
     depends_on:
