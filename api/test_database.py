@@ -13,6 +13,8 @@ def test_get_db_uses_clickhouse_environment(mock_client, monkeypatch):
     monkeypatch.setenv("CLICKHOUSE_DB", "finops_test")
     monkeypatch.setenv("CLICKHOUSE_USER", "reader")
     monkeypatch.setenv("CLICKHOUSE_PASSWORD", "secret")
+    monkeypatch.setenv("CLICKHOUSE_CONNECT_TIMEOUT", "2")
+    monkeypatch.setenv("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", "5")
 
     main.get_db()
 
@@ -22,6 +24,8 @@ def test_get_db_uses_clickhouse_environment(mock_client, monkeypatch):
         database="finops_test",
         user="reader",
         password="secret",
+        connect_timeout=2,
+        send_receive_timeout=5,
     )
 
 

@@ -15,6 +15,7 @@ def test_summary_uses_clickhouse(mock_execute):
     assert response.status_code == 200
     assert response.json() == {"total_cost": 100.5, "previous_cost": 50.0}
     assert "sumIf" in mock_execute.call_args.args[0]
+    assert "FROM costs FINAL" in mock_execute.call_args.args[0]
 
 
 @patch("main.execute_query", return_value=[("EC2", 80.0), ("S3", 20.0)])
@@ -25,6 +26,7 @@ def test_services_preserves_response_shape(mock_execute):
         {"name": "EC2", "cost": 80.0},
         {"name": "S3", "cost": 20.0},
     ]
+    assert "FROM costs FINAL" in mock_execute.call_args.args[0]
 
 
 @patch("main.execute_query", return_value=[("2026-07-20", 10.5, "actual")])
@@ -34,18 +36,21 @@ def test_daily_preserves_response_shape(mock_execute):
     assert response.json() == [
         {"date": "2026-07-20", "cost": 10.5, "type": "actual"}
     ]
+    assert "FROM costs FINAL" in mock_execute.call_args.args[0]
 
 
 @patch("main.execute_query", return_value=[("Production", 25.0)])
 def test_breakdown_preserves_response_shape(mock_execute):
     response = client.get("/api/breakdown?days=7")
     assert response.json() == [{"name": "Production", "cost": 25.0}]
+    assert "FROM costs FINAL" in mock_execute.call_args.args[0]
 
 
 @patch("main.execute_query", return_value=[("Platform", 25.0)])
 def test_teams_preserves_response_shape(mock_execute):
     response = client.get("/api/teams?days=7")
     assert response.json() == [{"name": "Platform", "cost": 25.0}]
+    assert "FROM costs FINAL" in mock_execute.call_args.args[0]
 
 
 @patch(
@@ -64,6 +69,7 @@ def test_details_preserves_response_shape(mock_execute):
             "type": "actual",
         }
     ]
+    assert "FROM costs FINAL" in mock_execute.call_args.args[0]
 
 
 @patch(
@@ -100,6 +106,21 @@ def test_create_account_returns_generated_uuid(mock_execute):
     assert response.json()["status"] == "created"
     UUID(response.json()["id"])
     assert "INSERT INTO accounts" in mock_execute.call_args.args[0]
+
+
+@patch("main.execute_query")
+def test_account_id_must_match_role_arn(mock_execute):
+    response = client.post(
+        "/api/accounts",
+        json={
+            "name": "Production",
+            "aws_account_id": "123456789012",
+            "role_arn": "arn:aws:iam::210987654321:role/FinOpsReadOnly",
+        },
+    )
+
+    assert response.status_code == 422
+    mock_execute.assert_not_called()
 
 
 def test_query_bounds_are_validated():
@@ -175,3 +196,12 @@ def test_metrics_use_constant_label_for_unmatched_paths():
     assert 'path="<unmatched>"' in response.text
     assert 'path="/missing-metric-path-one"' not in response.text
     assert 'path="/missing-metric-path-two"' not in response.text
+
+
+def test_metrics_use_constant_label_for_unknown_methods():
+    client.request("BREW", "/healthz")
+
+    response = client.get("/metrics")
+
+    assert 'method="<other>"' in response.text
+    assert 'method="BREW"' not in response.text

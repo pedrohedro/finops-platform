@@ -9,7 +9,7 @@ import boto3
 from clickhouse_driver import Client
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import Response
@@ -24,6 +24,10 @@ def get_db() -> Client:
         database=os.getenv("CLICKHOUSE_DB", "finops"),
         user=os.getenv("CLICKHOUSE_USER", "default"),
         password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+        connect_timeout=int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "2")),
+        send_receive_timeout=int(
+            os.getenv("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", "5")
+        ),
     )
 
 
@@ -60,6 +64,14 @@ class AWSAccount(BaseModel):
         Field(pattern=r"^arn:aws:iam::\d{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$"),
     ]
 
+    @field_validator("role_arn")
+    @classmethod
+    def account_matches_role(cls, role_arn: str, info: ValidationInfo) -> str:
+        if role_arn.split(":")[4] != info.data.get("aws_account_id"):
+            raise ValueError("AWS account ID must match role ARN")
+        return role_arn
+
+
 class AccountResponse(BaseModel):
     id: str
     name: str
@@ -89,8 +101,14 @@ async def observe_http(request: Request, call_next):
     response = await call_next(request)
     route = request.scope.get("route")
     path = getattr(route, "path", "<unmatched>")
-    HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
-    HTTP_LATENCY.labels(request.method, path).observe(perf_counter() - started)
+    method = (
+        request.method
+        if request.method
+        in {"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"}
+        else "<other>"
+    )
+    HTTP_REQUESTS.labels(method, path, str(response.status_code)).inc()
+    HTTP_LATENCY.labels(method, path).observe(perf_counter() - started)
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Content-Security-Policy"] = "default-src 'self'"
@@ -145,7 +163,7 @@ def get_summary(days: Days = 30):
         SELECT
             round(sumIf(cost, record_type = 'actual' AND date >= %(start)s AND date <= %(end)s), 2),
             round(sumIf(cost, record_type = 'actual' AND date >= %(previous_start)s AND date < %(start)s), 2)
-        FROM costs
+        FROM costs FINAL
         """,
         {"start": start_date, "end": end_date, "previous_start": previous_start},
     )
@@ -158,7 +176,7 @@ def top_services(days: Days = 30, limit: Limit = 5):
     rows = execute_query(
         """
         SELECT service, round(sum(cost), 2) AS total
-        FROM costs
+        FROM costs FINAL
         WHERE date >= %(start)s AND record_type = 'actual'
         GROUP BY service
         ORDER BY total DESC
@@ -174,7 +192,7 @@ def daily_trend(days: Days = 30):
     rows = execute_query(
         """
         SELECT toString(date), round(sum(cost), 2), record_type
-        FROM costs
+        FROM costs FINAL
         WHERE date >= %(start)s
         GROUP BY date, record_type
         ORDER BY date, record_type
@@ -193,7 +211,7 @@ def grouped_costs(column: str, days: int, unknown: str) -> list[dict]:
     rows = execute_query(
         f"""
         SELECT if({column} = '', %(unknown)s, {column}) AS name, round(sum(cost), 2)
-        FROM costs
+        FROM costs FINAL
         WHERE date >= %(start)s AND record_type = 'actual'
         GROUP BY name
         ORDER BY sum(cost) DESC
@@ -224,7 +242,7 @@ def raw_details(days: Days = 7, limit: Limit = 100):
             if(environment = '', 'Unknown', environment),
             round(cost, 2),
             record_type
-        FROM costs
+        FROM costs FINAL
         WHERE date >= %(start)s
         ORDER BY date DESC, cost DESC
         LIMIT %(limit)s
