@@ -45,23 +45,66 @@ def test_collect_from_account_propagates_aws_failure(monkeypatch):
         )
 
 
-def test_mock_rows_are_deterministic_for_same_date():
+def test_mock_rows_keep_overlapping_history_stable_across_days():
     expected_first = (
         "000000000000",
         date(2026, 7, 28),
         "Amazon EC2",
-        90.0,
+        93.0,
         "Engineering",
         "Production",
         "actual",
     )
 
-    first = collector.build_mock_records(date(2026, 7, 28))
-    second = collector.build_mock_records(date(2026, 7, 28))
+    first = {
+        (row[1], row[2]): row
+        for row in collector.build_mock_records(date(2026, 7, 28))
+    }
+    second = {
+        (row[1], row[2]): row
+        for row in collector.build_mock_records(date(2026, 7, 29))
+    }
+    overlapping_keys = first.keys() & second.keys()
 
-    assert first == second
     assert len(first) == 300
-    assert first[0] == expected_first
+    assert len(overlapping_keys) == 295
+    assert first[(date(2026, 7, 28), "Amazon EC2")] == expected_first
+    assert all(first[key] == second[key] for key in overlapping_keys)
+
+
+def test_collect_uses_mock_without_credentials_even_with_active_accounts(monkeypatch):
+    executions = []
+
+    class RecordingClient:
+        def execute(self, query, rows=None):
+            executions.append((query, rows))
+            if "SELECT aws_account_id, role_arn" in query:
+                return [
+                    (
+                        "123456789012",
+                        "arn:aws:iam::123456789012:role/FinOpsCollector",
+                    )
+                ]
+            return []
+
+    def reject_aws_call(*_args, **_kwargs):
+        raise AssertionError("boto3.client must not run in mock mode")
+
+    clickhouse = RecordingClient()
+    monkeypatch.setattr(collector, "Client", lambda **_kwargs: clickhouse)
+    monkeypatch.setattr(collector, "aws_ak", None)
+    monkeypatch.setattr(collector, "aws_sk", None)
+    monkeypatch.setattr(collector.boto3, "client", reject_aws_call)
+
+    collector.collect()
+
+    mock_inserts = [
+        rows
+        for query, rows in executions
+        if "INSERT INTO costs" in query
+    ]
+    assert len(mock_inserts) == 1
+    assert {row[0] for row in mock_inserts[0]} == {"000000000000"}
 
 
 def test_insert_mock_data_propagates_database_failure():

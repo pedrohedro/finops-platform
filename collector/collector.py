@@ -76,7 +76,7 @@ def build_mock_records(today: date):
     for day_offset in range(60):
         current_date = today - timedelta(days=day_offset)
         for service_index, service in enumerate(services):
-            cost = 30.0 + service_index * 10 + day_offset % 7
+            cost = 30.0 + service_index * 10 + current_date.weekday()
             if service == "Amazon EC2":
                 cost *= 3
             records.append(
@@ -105,16 +105,13 @@ def collect():
     """)
 
     accounts = get_accounts(client)
-    
-    if not accounts:
-        if not aws_ak or not aws_sk:
-            print("No accounts and no AWS keys. Inserting mock data.")
-            insert_mock_data(client)
-        else:
-            print("No accounts registered in DB. Using local credentials as fallback.")
-            # Fallback to local keys if no accounts in DB but keys exist
-            # ... (keep existing simple collection if needed, or just insert mock)
-            insert_mock_data(client)
+
+    if not aws_ak or not aws_sk:
+        print("AWS credentials unavailable. Inserting mock data.")
+        insert_mock_data(client)
+    elif not accounts:
+        print("No accounts registered in DB. Using local credentials as fallback.")
+        insert_mock_data(client)
     else:
         for acc_id, role_arn in accounts:
             collect_from_account(client, acc_id, role_arn)
