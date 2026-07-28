@@ -180,6 +180,41 @@ def test_collect_from_account_preserves_aws_account_id(monkeypatch):
     assert [row[3] for row in rows] == [12.34, 0.0, -4.2]
 
 
+def test_collect_from_account_surfaces_last_sync_completion_failure(monkeypatch):
+    sts = Mock()
+    sts.assume_role.return_value = {
+        "Credentials": {
+            "AccessKeyId": "key",
+            "SecretAccessKey": "secret",
+            "SessionToken": "token",
+        }
+    }
+    cost_explorer = Mock()
+    cost_explorer.get_cost_and_usage.return_value = {"ResultsByTime": []}
+    monkeypatch.setattr(
+        collector.boto3,
+        "client",
+        lambda service, **_kwargs: {"sts": sts, "ce": cost_explorer}[service],
+    )
+
+    clickhouse = Mock()
+
+    def execute(query, *_args, **kwargs):
+        if "ALTER TABLE accounts UPDATE" in query:
+            if kwargs.get("settings") == {"mutations_sync": 1}:
+                raise OSError("last_sync mutation failed")
+            return None
+
+    clickhouse.execute.side_effect = execute
+
+    with pytest.raises(OSError, match="last_sync mutation failed"):
+        collector.collect_from_account(
+            clickhouse,
+            "123456789012",
+            "arn:aws:iam::123456789012:role/FinOpsCollector",
+        )
+
+
 def test_insert_mock_data_uses_synthetic_account_id():
     clickhouse = Mock()
 

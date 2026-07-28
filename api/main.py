@@ -121,12 +121,47 @@ def metrics():
 
 
 # ---------- Health ----------
+REQUIRED_SCHEMA_COLUMNS = {
+    ("accounts", "aws_account_id"),
+    ("accounts", "created_at"),
+    ("accounts", "id"),
+    ("accounts", "last_sync"),
+    ("accounts", "name"),
+    ("accounts", "role_arn"),
+    ("accounts", "status"),
+    ("costs", "aws_account_id"),
+    ("costs", "cost"),
+    ("costs", "date"),
+    ("costs", "environment"),
+    ("costs", "record_type"),
+    ("costs", "service"),
+    ("costs", "team"),
+    ("costs", "timestamp"),
+}
+
+
 def database_online() -> bool:
     try:
-        get_db().execute("SELECT 1")
+        get_db().execute("SELECT 1", settings={"max_execution_time": 2})
         return True
     except Exception:
         return False
+
+
+def database_schema_ready() -> bool:
+    client = get_db()
+    settings = {"max_execution_time": 2}
+    client.execute("SELECT 1", settings=settings)
+    columns = client.execute(
+        """
+        SELECT table, name
+        FROM system.columns
+        WHERE database = currentDatabase()
+          AND table IN ('accounts', 'costs')
+        """,
+        settings=settings,
+    )
+    return REQUIRED_SCHEMA_COLUMNS <= set(columns)
 
 
 @app.get("/healthz")
@@ -136,8 +171,12 @@ def liveness():
 
 @app.get("/readyz")
 def readiness():
-    if not database_online():
+    try:
+        schema_ready = database_schema_ready()
+    except Exception:
         raise HTTPException(status_code=503, detail="ClickHouse unavailable")
+    if not schema_ready:
+        raise HTTPException(status_code=503, detail="ClickHouse schema incompatible")
     return {"status": "ready", "database": "online"}
 
 
