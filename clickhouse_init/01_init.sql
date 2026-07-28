@@ -2,6 +2,7 @@ CREATE DATABASE IF NOT EXISTS finops;
 
 CREATE TABLE IF NOT EXISTS finops.costs
 (
+    aws_account_id String DEFAULT '000000000000',
     date Date,
     timestamp DateTime DEFAULT now(),
     service String,
@@ -10,9 +11,9 @@ CREATE TABLE IF NOT EXISTS finops.costs
     environment String,
     record_type String DEFAULT 'actual'
 )
-ENGINE = ReplacingMergeTree()
+ENGINE = ReplacingMergeTree(timestamp)
 PARTITION BY toYYYYMM(date)
-ORDER BY (date, service, record_type);
+ORDER BY (aws_account_id, date, service, record_type);
 
 CREATE TABLE IF NOT EXISTS finops.accounts
 (

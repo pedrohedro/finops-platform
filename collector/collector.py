@@ -55,8 +55,8 @@ def collect_from_account(client, account_id, role_arn):
                 
                 if cost > 0:
                     client.execute(
-                        "INSERT INTO costs (date, service, cost, record_type) VALUES",
-                        [(date_str, service, cost, 'actual')]
+                        "INSERT INTO costs (aws_account_id, date, service, cost, record_type) VALUES",
+                        [(account_id, date_str, service, cost, 'actual')]
                     )
         
         # Update last_sync
@@ -75,8 +75,8 @@ def collect():
     # Ensure table exists (though handled by init script, good for safety)
     client.execute("""
         CREATE TABLE IF NOT EXISTS costs
-        (date Date, timestamp DateTime DEFAULT now(), service String, cost Float64, team String, environment String, record_type String DEFAULT 'actual')
-        ENGINE = ReplacingMergeTree() PARTITION BY toYYYYMM(date) ORDER BY (date, service, record_type)
+        (aws_account_id String DEFAULT '000000000000', date Date, timestamp DateTime DEFAULT now(), service String, cost Float64, team String, environment String, record_type String DEFAULT 'actual')
+        ENGINE = ReplacingMergeTree(timestamp) PARTITION BY toYYYYMM(date) ORDER BY (aws_account_id, date, service, record_type)
     """)
 
     accounts = get_accounts(client)
@@ -110,10 +110,10 @@ def insert_mock_data(client):
             if svc == "Amazon EC2": base_cost *= 3
             team = random.choice(teams)
             env = random.choice(environments)
-            records.append((date_str, svc, round(base_cost, 2), team, env, 'actual'))
+            records.append(('000000000000', date_str, svc, round(base_cost, 2), team, env, 'actual'))
             
     try:
-        client.execute("INSERT INTO costs (date, service, cost, team, environment, record_type) VALUES", records)
+        client.execute("INSERT INTO costs (aws_account_id, date, service, cost, team, environment, record_type) VALUES", records)
         print("Mock data inserted successfully")
     except Exception as e:
         print(f"Failed to insert mock data: {e}")
