@@ -15,7 +15,10 @@ RUN python -m venv /opt/venv \
 FROM python:3.11-slim
 
 ENV PATH="/opt/venv/bin:$PATH"
-RUN groupadd --gid 10001 finops \
+RUN python -m pip install --no-cache-dir \
+    setuptools==83.0.0 \
+    wheel==0.47.0 \
+    && groupadd --gid 10001 finops \
     && useradd --uid 10001 --gid 10001 --create-home finops
 
 WORKDIR /app
