@@ -1,4 +1,7 @@
-.PHONY: up down build logs clean setup
+PYTHON ?= python3
+PNPM ?= corepack pnpm
+
+.PHONY: up down build logs clean setup test test-smoke smoke
 
 up:
 	docker compose up -d
@@ -19,4 +22,16 @@ clean:
 
 setup:
 	cp .env.example .env || true
-	npm install --prefix dashboard --legacy-peer-deps
+	$(PNPM) --dir dashboard install --frozen-lockfile
+
+test:
+	$(PYTHON) -m pytest api collector normalizer forecast -q
+	$(PNPM) --dir dashboard install --frozen-lockfile
+	$(PNPM) --dir dashboard build
+	./scripts/test_smoke.sh
+
+test-smoke:
+	./scripts/test_smoke.sh
+
+smoke:
+	./scripts/smoke.sh
