@@ -7,13 +7,15 @@ from clickhouse_driver import Client
 aws_ak = os.getenv("AWS_ACCESS_KEY_ID")
 aws_sk = os.getenv("AWS_SECRET_ACCESS_KEY")
 ch_host = os.getenv("CLICKHOUSE_HOST", "clickhouse")
+ch_port = int(os.getenv("CLICKHOUSE_PORT", "9000"))
+ch_db = os.getenv("CLICKHOUSE_DB", "finops")
 ch_user = os.getenv("CLICKHOUSE_USER", "default")
 ch_password = os.getenv("CLICKHOUSE_PASSWORD", "")
 
 # Need to check aws keys because no default dummy credentials setup in the container avoids crash loop
 def get_accounts(client):
     try:
-        rows = client.execute("SELECT aws_account_id, role_arn FROM finops.accounts WHERE status = 'active'")
+        rows = client.execute("SELECT aws_account_id, role_arn FROM accounts WHERE status = 'active'")
         return rows
     except Exception as e:
         print(f"Error fetching accounts: {e}")
@@ -48,16 +50,15 @@ def collect_from_account(client, account_id, role_arn):
         )
         
         for result in response.get('ResultsByTime', []):
-            date_str = result['TimePeriod']['Start']
+            date_value = datetime.fromisoformat(result['TimePeriod']['Start']).date()
             for group in result.get('Groups', []):
                 service = group['Keys'][0]
                 cost = float(group['Metrics']['UnblendedCost']['Amount'])
                 
-                if cost > 0:
-                    client.execute(
-                        "INSERT INTO costs (aws_account_id, date, service, cost, record_type) VALUES",
-                        [(account_id, date_str, service, cost, 'actual')]
-                    )
+                client.execute(
+                    "INSERT INTO costs (aws_account_id, date, service, cost, record_type) VALUES",
+                    [(account_id, date_value, service, cost, 'actual')]
+                )
         
         # Update last_sync
         client.execute(
@@ -70,7 +71,7 @@ def collect_from_account(client, account_id, role_arn):
 
 def collect():
     print("Starting collector cycle...")
-    client = Client(host=ch_host, database="finops", user=ch_user, password=ch_password)
+    client = Client(host=ch_host, port=ch_port, database=ch_db, user=ch_user, password=ch_password)
     
     # Ensure table exists (though handled by init script, good for safety)
     client.execute("""
@@ -104,13 +105,12 @@ def insert_mock_data(client):
     records = []
     for d in range(60):
         current_date = end - timedelta(days=d)
-        date_str = current_date.strftime("%Y-%m-%d")
         for svc in services:
             base_cost = random.uniform(10, 100)
             if svc == "Amazon EC2": base_cost *= 3
             team = random.choice(teams)
             env = random.choice(environments)
-            records.append(('000000000000', date_str, svc, round(base_cost, 2), team, env, 'actual'))
+            records.append(('000000000000', current_date.date(), svc, round(base_cost, 2), team, env, 'actual'))
             
     try:
         client.execute("INSERT INTO costs (aws_account_id, date, service, cost, team, environment, record_type) VALUES", records)
