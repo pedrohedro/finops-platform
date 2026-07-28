@@ -147,12 +147,54 @@ def test_liveness_does_not_touch_database(mock_get_db):
     mock_get_db.assert_not_called()
 
 
+REQUIRED_SCHEMA_COLUMNS = [
+    ("accounts", "aws_account_id"),
+    ("accounts", "created_at"),
+    ("accounts", "id"),
+    ("accounts", "last_sync"),
+    ("accounts", "name"),
+    ("accounts", "role_arn"),
+    ("accounts", "status"),
+    ("costs", "aws_account_id"),
+    ("costs", "cost"),
+    ("costs", "date"),
+    ("costs", "environment"),
+    ("costs", "record_type"),
+    ("costs", "service"),
+    ("costs", "team"),
+    ("costs", "timestamp"),
+]
+
+
 @patch("main.get_db")
-def test_readiness_returns_200_when_clickhouse_responds(mock_get_db):
-    mock_get_db.return_value.execute.return_value = [(1,)]
+def test_readiness_returns_200_when_clickhouse_schema_is_current(mock_get_db):
+    mock_get_db.return_value.execute.side_effect = [
+        [(1,)],
+        REQUIRED_SCHEMA_COLUMNS,
+    ]
     response = client.get("/readyz")
     assert response.status_code == 200
     assert response.json() == {"status": "ready", "database": "online"}
+    assert mock_get_db.return_value.execute.call_count == 2
+    assert (
+        "FROM system.columns"
+        in mock_get_db.return_value.execute.call_args_list[1].args[0]
+    )
+
+
+@patch("main.get_db")
+def test_readiness_returns_503_when_required_schema_column_is_missing(mock_get_db):
+    legacy_columns = [
+        column
+        for column in REQUIRED_SCHEMA_COLUMNS
+        if column != ("costs", "aws_account_id")
+    ]
+    mock_get_db.return_value.execute.side_effect = [[(1,)], legacy_columns]
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "ClickHouse schema incompatible"}
 
 
 @patch("main.get_db")

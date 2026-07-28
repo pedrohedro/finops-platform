@@ -62,7 +62,8 @@ def collect_from_account(client, account_id, role_arn):
     # Update last_sync
     client.execute(
         "ALTER TABLE accounts UPDATE last_sync = now() WHERE aws_account_id = %(acc)s",
-        {"acc": account_id}
+        {"acc": account_id},
+        settings={"mutations_sync": 1},
     )
     print(f"Successfully collected real data for account {account_id}")
 
