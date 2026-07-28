@@ -2,6 +2,74 @@ from datetime import date
 from unittest.mock import Mock
 
 import collector
+import pytest
+
+
+def test_main_runs_exactly_one_successful_cycle(monkeypatch):
+    calls = []
+    monkeypatch.setattr(collector, "collect", lambda: calls.append("cycle"))
+
+    assert collector.main() == 0
+    assert calls == ["cycle"]
+
+
+def test_main_returns_nonzero_for_irrecoverable_failure(monkeypatch):
+    def fail():
+        raise OSError("ClickHouse down")
+
+    monkeypatch.setattr(collector, "collect", fail)
+
+    assert collector.main() == 1
+
+
+def test_get_accounts_propagates_database_failure():
+    clickhouse = Mock()
+    clickhouse.execute.side_effect = OSError("ClickHouse down")
+
+    with pytest.raises(OSError, match="ClickHouse down"):
+        collector.get_accounts(clickhouse)
+
+
+def test_collect_from_account_propagates_aws_failure(monkeypatch):
+    monkeypatch.setattr(
+        collector.boto3,
+        "client",
+        Mock(side_effect=RuntimeError("AWS unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="AWS unavailable"):
+        collector.collect_from_account(
+            Mock(),
+            "123456789012",
+            "arn:aws:iam::123456789012:role/FinOpsCollector",
+        )
+
+
+def test_mock_rows_are_deterministic_for_same_date():
+    expected_first = (
+        "000000000000",
+        date(2026, 7, 28),
+        "Amazon EC2",
+        90.0,
+        "Engineering",
+        "Production",
+        "actual",
+    )
+
+    first = collector.build_mock_records(date(2026, 7, 28))
+    second = collector.build_mock_records(date(2026, 7, 28))
+
+    assert first == second
+    assert len(first) == 300
+    assert first[0] == expected_first
+
+
+def test_insert_mock_data_propagates_database_failure():
+    clickhouse = Mock()
+    clickhouse.execute.side_effect = OSError("insert failed")
+
+    with pytest.raises(OSError, match="insert failed"):
+        collector.insert_mock_data(clickhouse)
 
 
 def test_collect_from_account_preserves_aws_account_id(monkeypatch):
