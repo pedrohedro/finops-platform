@@ -22,12 +22,12 @@ clean:
 
 setup:
 	cp .env.example .env || true
-	$(PNPM) --dir dashboard install --frozen-lockfile
+	cd dashboard && $(PNPM) install --frozen-lockfile
 
 test:
 	$(PYTHON) -m pytest api collector normalizer forecast -q
-	$(PNPM) --dir dashboard install --frozen-lockfile
-	$(PNPM) --dir dashboard build
+	cd dashboard && $(PNPM) install --frozen-lockfile
+	cd dashboard && $(PNPM) build
 	./scripts/test_smoke.sh
 	$(PYTHON) scripts/test_supply_chain.py
 	./scripts/test_push_immutable_image.sh
