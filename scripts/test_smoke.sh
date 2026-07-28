@@ -16,6 +16,9 @@ set -euo pipefail
 
 printf 'args=%s\n' "$*" >>"$FAKE_DOCKER_LOG"
 printf 'envfile=%s\n' "${FINOPS_ENV_FILE:-}" >>"$FAKE_DOCKER_LOG"
+if [[ -f "${FINOPS_ENV_FILE:-}" ]]; then
+  grep '^NEXT_PUBLIC_API_URL=' "$FINOPS_ENV_FILE" >>"$FAKE_DOCKER_LOG" || true
+fi
 
 for variable in \
   AWS_ACCESS_KEY_ID \
@@ -81,6 +84,9 @@ assert_log_contains "exec -T dashboard node -e"
 assert_log_contains "exec -T clickhouse clickhouse-client"
 assert_log_contains "down -v --remove-orphans --rmi local"
 assert_log_contains "AbortSignal.timeout(10000)"
+assert_log_contains "NEXT_PUBLIC_API_URL=http://localhost:8000"
+assert_log_contains "content-security-policy"
+assert_log_contains "new URL(process.env.NEXT_PUBLIC_API_URL).origin"
 assert_log_contains "--connect_timeout 5"
 assert_log_contains "--send_timeout 10"
 assert_log_contains "--receive_timeout 10"

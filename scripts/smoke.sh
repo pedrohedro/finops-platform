@@ -31,6 +31,7 @@ printf '%s\n' \
   'CLICKHOUSE_CONNECT_TIMEOUT=2' \
   'CLICKHOUSE_SEND_RECEIVE_TIMEOUT=5' \
   'CORS_ORIGINS=http://localhost:3000' \
+  'NEXT_PUBLIC_API_URL=http://localhost:8000' \
   >"$env_file"
 
 compose_command=(
@@ -108,7 +109,7 @@ bounded_compose "$compose_job_timeout_seconds" \
 bounded_compose "$probe_timeout_seconds" exec -T api python -c \
   "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=5)"
 bounded_compose "$probe_timeout_seconds" exec -T dashboard node -e \
-  "fetch('http://localhost:3000/', { signal: AbortSignal.timeout(10000) }).then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
+  "fetch('http://localhost:3000/', { signal: AbortSignal.timeout(10000) }).then(r => { const csp = r.headers.get('content-security-policy') || ''; const origin = new URL(process.env.NEXT_PUBLIC_API_URL).origin; if (!r.ok || !csp.includes(\"connect-src 'self' \" + origin) || csp.includes('onrender.com')) process.exit(1) }).catch(() => process.exit(1))"
 
 counts=$(
   bounded_compose "$probe_timeout_seconds" exec -T clickhouse clickhouse-client \
