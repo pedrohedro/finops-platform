@@ -29,6 +29,10 @@ DAILY_TOKEN_BUDGET = int(os.getenv("AGENT_DAILY_TOKEN_BUDGET", "2000000"))
 FINOPS_API_URL = os.getenv("FINOPS_API_URL", "http://127.0.0.1:8080").rstrip("/")
 TOOL_HTTP_TIMEOUT = float(os.getenv("AGENT_TOOL_TIMEOUT_SECONDS", "10"))
 MAX_TOOL_RESULT_CHARS = 20_000
+MAX_REPLY_CHARS = 20_000  # must match the assistant-turn limit in the API
+# Whole-turn deadline. Keep it below the API proxy timeout (AGENT_TIMEOUT_SECONDS).
+DEADLINE_SECONDS = float(os.getenv("AGENT_DEADLINE_SECONDS", "100"))
+MIN_CALL_SECONDS = 5.0
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -254,6 +258,8 @@ class FinOpsAgent:
         effort: str = EFFORT,
         max_tokens: int = MAX_TOKENS,
         max_iterations: int = MAX_ITERATIONS,
+        deadline_seconds: float = DEADLINE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.client = client
         self.execute_tool = execute_tool
@@ -262,9 +268,12 @@ class FinOpsAgent:
         self.effort = effort
         self.max_tokens = max_tokens
         self.max_iterations = max_iterations
+        self.deadline_seconds = deadline_seconds
+        self._clock = clock
 
-    def _create(self, messages: list[dict[str, Any]]) -> Any:
+    def _create(self, messages: list[dict[str, Any]], timeout: float) -> Any:
         return self.client.beta.messages.create(
+            timeout=timeout,
             model=self.model,
             max_tokens=self.max_tokens,
             system=SYSTEM_PROMPT,
@@ -313,10 +322,20 @@ class FinOpsAgent:
             {"role": m["role"], "content": m["content"]} for m in history
         ]
         result = AgentResult(reply="", stop_reason="", model=self.model)
+        deadline = self._clock() + self.deadline_seconds
 
         for _ in range(self.max_iterations):
+            remaining = deadline - self._clock()
+            if remaining < MIN_CALL_SECONDS:
+                result.stop_reason = "deadline"
+                result.reply = (
+                    "A análise excedeu o tempo limite. "
+                    "Tente uma pergunta mais específica (período, serviço ou time)."
+                )
+                return result
             self.budget.check()
-            response = self._create(messages)
+            # The client retries once, so give each attempt half of what is left.
+            response = self._create(messages, timeout=remaining / 2)
             used_in, used_out = _usage_tokens(getattr(response, "usage", None))
             result.input_tokens += used_in
             result.output_tokens += used_out
@@ -352,7 +371,10 @@ class FinOpsAgent:
             text = _text_of(response.content)
             if response.stop_reason == "max_tokens":
                 text = (text + "\n\n[resposta interrompida pelo limite de tamanho]").strip()
-            result.reply = text or "Não consegui gerar uma resposta. Tente reformular."
+            text = text or "Não consegui gerar uma resposta. Tente reformular."
+            if len(text) > MAX_REPLY_CHARS:
+                text = text[: MAX_REPLY_CHARS - 40].rstrip() + "\n\n[resposta truncada]"
+            result.reply = text
             return result
 
         result.stop_reason = "max_iterations"
@@ -364,7 +386,7 @@ class FinOpsAgent:
 
 
 def build_default_agent() -> FinOpsAgent:
-    client = anthropic.Anthropic(timeout=90.0, max_retries=2)
+    client = anthropic.Anthropic(timeout=90.0, max_retries=1)
     return FinOpsAgent(
         client=client,
         execute_tool=make_http_tool_executor(),

@@ -78,3 +78,25 @@ def test_chat_busy_returns_429(fake_agent, monkeypatch):
 def test_docs_are_not_exposed():
     assert client.get("/docs").status_code == 404
     assert client.get("/openapi.json").status_code == 404
+
+
+def test_chat_accepts_long_assistant_turn_in_history(fake_agent):
+    payload = {
+        "messages": [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b" * 20000},
+            {"role": "user", "content": "c"},
+        ]
+    }
+    assert client.post("/chat", json=payload).status_code == 200
+
+
+def test_chat_rejects_oversized_assistant_turn(fake_agent):
+    payload = {
+        "messages": [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b" * 20001},
+            {"role": "user", "content": "c"},
+        ]
+    }
+    assert client.post("/chat", json=payload).status_code == 422

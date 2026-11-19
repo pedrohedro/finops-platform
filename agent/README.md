@@ -18,7 +18,7 @@ Dashboard (chat) ──POST /api/agent/chat──▶ API FinOps ──▶ agente
   fala com a API.
 - **Sem exposição direta**: escuta apenas em loopback (supervisord) ou na rede privada
   do Compose; o navegador só fala com a API, que valida o histórico (máx. 20 turnos,
-  4.000 caracteres, papéis alternados, sem `system`).
+  4.000 caracteres por pergunta, papéis alternados, sem `system`).
 - **Teto de custo**: orçamento diário de tokens (`AGENT_DAILY_TOKEN_BUDGET`),
   concorrência máxima (`AGENT_MAX_CONCURRENCY`) e no máximo `AGENT_MAX_ITERATIONS`
   chamadas ao modelo por pergunta.
@@ -38,6 +38,7 @@ Dashboard (chat) ──POST /api/agent/chat──▶ API FinOps ──▶ agente
 | `AGENT_DAILY_TOKEN_BUDGET` | `2000000` | Por processo, zera à meia-noite UTC. |
 | `AGENT_MAX_CONCURRENCY` | `4` | Acima disso responde 429. |
 | `AGENT_MAX_ITERATIONS` | `6` | |
+| `AGENT_DEADLINE_SECONDS` | `100` | Prazo total da pergunta. Mantenha abaixo de `AGENT_TIMEOUT_SECONDS` da API (`130`). |
 | `FINOPS_API_URL` | `http://127.0.0.1:8080` | |
 
 ## Métricas

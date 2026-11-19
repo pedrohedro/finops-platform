@@ -366,12 +366,22 @@ def test_account_connection(account: AWSAccount):
 # The agent runs as a separate internal process (loopback / private network).
 # The browser only talks to this API, which validates and forwards the turn.
 AGENT_URL = os.getenv("AGENT_URL", "http://127.0.0.1:8090").rstrip("/")
-AGENT_TIMEOUT_SECONDS = float(os.getenv("AGENT_TIMEOUT_SECONDS", "120"))
+# Must exceed the agent's AGENT_DEADLINE_SECONDS (default 100) plus one tool round.
+AGENT_TIMEOUT_SECONDS = float(os.getenv("AGENT_TIMEOUT_SECONDS", "130"))
 
 
 class AgentChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: Annotated[str, Field(min_length=1, max_length=4000)]
+    # Assistant turns echo model replies (capped at 20k chars by the agent);
+    # user turns are capped at 4k.
+    content: Annotated[str, Field(min_length=1, max_length=20000)]
+
+    @field_validator("content")
+    @classmethod
+    def user_turn_size(cls, content: str, info: ValidationInfo) -> str:
+        if info.data.get("role") == "user" and len(content) > 4000:
+            raise ValueError("user messages are limited to 4000 characters")
+        return content
 
 
 class AgentChatRequest(BaseModel):

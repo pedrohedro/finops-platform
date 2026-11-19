@@ -16,7 +16,7 @@ from uuid import uuid4
 import anthropic
 from fastapi import FastAPI, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from starlette.responses import Response
 
 from finops_agent import BudgetExceeded, FinOpsAgent, build_default_agent
@@ -41,7 +41,16 @@ _slots = threading.BoundedSemaphore(MAX_CONCURRENCY)
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: Annotated[str, Field(min_length=1, max_length=4000)]
+    # Assistant turns echo model replies (capped at 20k chars by the agent);
+    # user turns are capped at 4k.
+    content: Annotated[str, Field(min_length=1, max_length=20000)]
+
+    @field_validator("content")
+    @classmethod
+    def user_turn_size(cls, content: str, info: ValidationInfo) -> str:
+        if info.data.get("role") == "user" and len(content) > 4000:
+            raise ValueError("user messages are limited to 4000 characters")
+        return content
 
 
 class ChatRequest(BaseModel):

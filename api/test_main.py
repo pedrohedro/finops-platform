@@ -298,3 +298,22 @@ def test_agent_chat_maps_upstream_status(mock_post):
     for upstream, expected in ((429, 429), (503, 503), (500, 502), (422, 502)):
         mock_post.return_value = httpx.Response(upstream, json={"detail": "x"})
         assert client.post("/api/agent/chat", json=AGENT_TURN).status_code == expected
+
+
+@patch("main.httpx.post")
+def test_agent_chat_accepts_long_assistant_reply_in_history(mock_post):
+    mock_post.return_value = httpx.Response(200, json={"reply": "ok", "request_id": "r"})
+    payload = {
+        "messages": [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b" * 20000},
+            {"role": "user", "content": "c"},
+        ]
+    }
+    assert client.post("/api/agent/chat", json=payload).status_code == 200
+
+
+def test_agent_proxy_timeout_exceeds_agent_deadline():
+    import main
+
+    assert main.AGENT_TIMEOUT_SECONDS > 100

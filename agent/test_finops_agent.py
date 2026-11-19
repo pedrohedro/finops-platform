@@ -244,3 +244,47 @@ def test_http_executor_surfaces_status_errors():
     )
     with pytest.raises(httpx.HTTPStatusError):
         make_http_tool_executor(client)("get_cost_summary", {"days": 7})
+
+
+def test_each_call_gets_the_remaining_deadline():
+    now = {"t": 0.0}
+    agent, client = make_agent(
+        [response("tool_use", [tool_use("t", "get_cost_summary", {"days": 1})]),
+         response("end_turn", [text("ok")])],
+    )
+    agent.deadline_seconds = 100
+    agent._clock = lambda: now["t"]
+
+    def execute(name, args):
+        now["t"] += 40  # a slow tool round eats into the turn's deadline
+        return "{}"
+
+    agent.execute_tool = execute
+    agent.run([{"role": "user", "content": "x"}], request_id="d1")
+    assert client.calls[0]["timeout"] == 50
+    assert client.calls[1]["timeout"] == 30
+
+
+def test_deadline_stops_before_another_model_call():
+    now = {"t": 0.0}
+    agent, client = make_agent(
+        [response("tool_use", [tool_use("t", "get_cost_summary", {"days": 1})])]
+    )
+    agent.deadline_seconds = 10
+    agent._clock = lambda: now["t"]
+
+    def execute(name, args):
+        now["t"] += 8
+        return "{}"
+
+    agent.execute_tool = execute
+    result = agent.run([{"role": "user", "content": "x"}], request_id="d2")
+    assert result.stop_reason == "deadline"
+    assert len(client.calls) == 1
+
+
+def test_long_reply_is_capped_to_history_limit():
+    agent, _ = make_agent([response("end_turn", [text("a" * 50_000)])])
+    result = agent.run([{"role": "user", "content": "x"}], request_id="d3")
+    assert len(result.reply) <= finops_agent.MAX_REPLY_CHARS
+    assert result.reply.endswith("[resposta truncada]")
