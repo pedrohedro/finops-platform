@@ -61,7 +61,7 @@ assert push_step["env"]["SOURCE_REVISION"] == "${{ github.sha }}", (
 
 python_dockerfiles = [
     repo_root / component / "Dockerfile"
-    for component in ("api", "collector", "normalizer", "forecast")
+    for component in ("api", "collector", "normalizer", "forecast", "agent")
 ]
 for dockerfile in python_dockerfiles:
     assert "USER 10001:10001" in dockerfile.read_text(), (

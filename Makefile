@@ -25,7 +25,7 @@ setup:
 	cd dashboard && $(PNPM) install --frozen-lockfile
 
 test:
-	$(PYTHON) -m pytest api collector normalizer forecast -q
+	$(PYTHON) -m pytest api collector normalizer forecast agent -q
 	cd dashboard && $(PNPM) install --frozen-lockfile
 	cd dashboard && $(PNPM) build
 	./scripts/test_smoke.sh

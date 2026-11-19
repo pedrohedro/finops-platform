@@ -27,6 +27,7 @@ services:
     environment:
       - CLICKHOUSE_HOST=clickhouse
       - CLICKHOUSE_PORT=9000
+      - AGENT_URL=http://agent:8090
     networks:
       - finops_net
     depends_on:
@@ -71,6 +72,35 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: 5s
+
+  agent:
+    build:
+      context: ./agent
+    # No env_file on purpose: the agent only reads the FinOps API and never
+    # receives ClickHouse or AWS credentials.
+    environment:
+      - FINOPS_API_URL=http://api:8000
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AGENT_MODEL=${AGENT_MODEL:-claude-opus-5-5}
+      - AGENT_EFFORT=${AGENT_EFFORT:-medium}
+      - AGENT_DAILY_TOKEN_BUDGET=${AGENT_DAILY_TOKEN_BUDGET:-2000000}
+    networks:
+      - finops_net
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
       start_period: 5s
 
   collector:

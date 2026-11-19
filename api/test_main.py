@@ -1,6 +1,7 @@
 from unittest.mock import patch
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -247,3 +248,53 @@ def test_metrics_use_constant_label_for_unknown_methods():
 
     assert 'method="<other>"' in response.text
     assert 'method="BREW"' not in response.text
+
+
+AGENT_TURN = {"messages": [{"role": "user", "content": "Quanto gastei?"}]}
+
+
+@patch("main.httpx.post")
+def test_agent_chat_forwards_validated_turn(mock_post):
+    mock_post.return_value = httpx.Response(
+        200,
+        json={
+            "reply": "US$ 10.00",
+            "request_id": "r1",
+            "model": "claude-opus-5-5",
+            "tool_calls": [{"tool": "get_cost_summary", "status": "ok"}],
+        },
+    )
+    response = client.post("/api/agent/chat", json=AGENT_TURN)
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply": "US$ 10.00",
+        "request_id": "r1",
+        "tool_calls": [{"tool": "get_cost_summary", "status": "ok"}],
+    }
+    assert mock_post.call_args.args[0].endswith("/chat")
+    assert mock_post.call_args.kwargs["json"] == AGENT_TURN
+    assert mock_post.call_args.kwargs["follow_redirects"] is False
+
+
+@patch("main.httpx.post")
+def test_agent_chat_rejects_malformed_history(mock_post):
+    for payload in (
+        {"messages": []},
+        {"messages": [{"role": "system", "content": "x"}]},
+        {"messages": [{"role": "user", "content": "x" * 4001}]},
+        {"messages": [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]},
+    ):
+        assert client.post("/api/agent/chat", json=payload).status_code == 422
+    mock_post.assert_not_called()
+
+
+@patch("main.httpx.post", side_effect=httpx.ConnectError("refused"))
+def test_agent_chat_unreachable_returns_503(mock_post):
+    assert client.post("/api/agent/chat", json=AGENT_TURN).status_code == 503
+
+
+@patch("main.httpx.post")
+def test_agent_chat_maps_upstream_status(mock_post):
+    for upstream, expected in ((429, 429), (503, 503), (500, 502), (422, 502)):
+        mock_post.return_value = httpx.Response(upstream, json={"detail": "x"})
+        assert client.post("/api/agent/chat", json=AGENT_TURN).status_code == expected
