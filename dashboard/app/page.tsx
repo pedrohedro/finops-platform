@@ -10,6 +10,7 @@ import { TopResources } from "@/components/dashboard/top-resources"
 import { Recommendations } from "@/components/dashboard/recommendations"
 import { Alerts } from "@/components/dashboard/alerts"
 import { UsageChart } from "@/components/dashboard/usage-chart"
+import { AgentChat } from "@/components/dashboard/agent-chat"
 import {
   DollarSign,
   TrendingUp,
@@ -157,6 +158,8 @@ export default function Dashboard() {
           </div>
         </main>
       </div>
+
+      <AgentChat apiUrl={API_URL} />
     </div>
   )
 }

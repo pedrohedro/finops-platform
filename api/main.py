@@ -2,10 +2,11 @@ import logging
 import os
 from datetime import datetime, timedelta
 from time import perf_counter
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 import boto3
+import httpx
 from clickhouse_driver import Client
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -359,3 +360,65 @@ def test_account_connection(account: AWSAccount):
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# ---------- FinOps Agent (F1: read-only copilot) ----------
+# The agent runs as a separate internal process (loopback / private network).
+# The browser only talks to this API, which validates and forwards the turn.
+AGENT_URL = os.getenv("AGENT_URL", "http://127.0.0.1:8090").rstrip("/")
+# Must exceed the agent's AGENT_DEADLINE_SECONDS (default 100) plus one tool round.
+AGENT_TIMEOUT_SECONDS = float(os.getenv("AGENT_TIMEOUT_SECONDS", "130"))
+
+
+class AgentChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    # Assistant turns echo model replies (capped at 20k chars by the agent);
+    # user turns are capped at 4k.
+    content: Annotated[str, Field(min_length=1, max_length=20000)]
+
+    @field_validator("content")
+    @classmethod
+    def user_turn_size(cls, content: str, info: ValidationInfo) -> str:
+        if info.data.get("role") == "user" and len(content) > 4000:
+            raise ValueError("user messages are limited to 4000 characters")
+        return content
+
+
+class AgentChatRequest(BaseModel):
+    messages: Annotated[list[AgentChatMessage], Field(min_length=1, max_length=20)]
+
+    @field_validator("messages")
+    @classmethod
+    def alternating_turns(cls, messages: list[AgentChatMessage]) -> list[AgentChatMessage]:
+        for index, message in enumerate(messages):
+            if message.role != ("user" if index % 2 == 0 else "assistant"):
+                raise ValueError("turns must alternate, starting and ending with user")
+        if messages[-1].role != "user":
+            raise ValueError("the last turn must come from the user")
+        return messages
+
+
+@app.post("/api/agent/chat")
+def agent_chat(request: AgentChatRequest):
+    try:
+        response = httpx.post(
+            f"{AGENT_URL}/chat",
+            json=request.model_dump(),
+            timeout=AGENT_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("FinOps agent unreachable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Agent unavailable") from exc
+    if response.status_code == 429:
+        raise HTTPException(status_code=429, detail="Agent busy or over budget")
+    if response.status_code == 503:
+        raise HTTPException(status_code=503, detail="Agent unavailable")
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Agent error")
+    body = response.json()
+    return {
+        "reply": str(body.get("reply", "")),
+        "request_id": str(body.get("request_id", "")),
+        "tool_calls": body.get("tool_calls", []),
+    }

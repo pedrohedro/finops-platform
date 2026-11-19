@@ -31,11 +31,15 @@ WORKDIR /app
 # Copy Backend (API) and install dependencies
 COPY api/ /app/api/
 COPY collector/requirements.txt /app/collector/requirements.txt
-RUN pip install --no-cache-dir -r /app/api/requirements.txt -r /app/collector/requirements.txt uvicorn httpx boto3
+COPY agent/requirements.txt /app/agent/requirements.txt
+RUN pip install --no-cache-dir -r /app/api/requirements.txt -r /app/collector/requirements.txt -r /app/agent/requirements.txt uvicorn httpx boto3
 
 # Copy Collector and its dependencies (if any)
 # Assuming collector uses the same clickhouse-connect library which is in api/requirements.txt
 COPY collector/ /app/collector/
+
+# Copy FinOps agent (internal process, loopback only)
+COPY agent/ /app/agent/
 
 # Copy Frontend Build from Stage 1
 COPY --from=builder-frontend /app/dashboard/.next /app/dashboard/.next
